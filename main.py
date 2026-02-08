@@ -11,7 +11,7 @@ API_HASH = "e40ccdcad3ea2108a95fdb371ced0ddd"         # Твой API_HASH
 USER_SESSION = "my_account"    # Название файла сессии
 BOT_TOKEN = "8298905952:AAGf0kWp7OEwu0XDAaf9E9v63TZuu6SVUUk"       # Токен от BotFather
 ADMIN_ID = 842022631        # Твой ID (чтобы чужие не рулили ботом)
-TARGET_CHAT = "@parserchenalbot"             # Куда слать находки
+TARGET_CHAT = "me"             # Куда слать находки
 
 # --- БАЗА ДАННЫХ ---
 db = sqlite3.connect("config.db")
