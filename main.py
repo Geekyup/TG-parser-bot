@@ -24,7 +24,6 @@ def match_keywords(text: str) -> bool:
 async def raw_handler(client, update, users, chats):
     if isinstance(update, types.UpdateNewChannelMessage):
         msg = update.message
-
         if not msg.message:
             return
 
@@ -50,8 +49,6 @@ async def raw_handler(client, update, users, chats):
 
 # ================= POLLING FALLBACK =================
 async def polling_loop():
-    await app.start()
-
     while True:
         try:
             async for dialog in app.get_dialogs():
@@ -87,9 +84,12 @@ async def polling_loop():
 
 # ================= START =================
 async def main():
+    # Стартуем клиент один раз через async with
     async with app:
         print("Userbot started (RAW + POLLING)")
+        # Запускаем polling параллельно, не стартуя клиент заново
         await polling_loop()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
