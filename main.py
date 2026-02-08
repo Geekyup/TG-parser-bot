@@ -8,7 +8,7 @@ api_hash = "e40ccdcad3ea2108a95fdb371ced0ddd"
 keywords = ["акция", "крипта", "вакансия", "путин", "россия", "рф", "зумеры"]
 target_chat = "me"
 
-app = Client("stable_userbot", api_id=api_id, api_hash=api_hash)
+app = Client("my_account", api_id=api_id, api_hash=api_hash)
 
 # Храним последние обработанные сообщения (чтобы не было дублей)
 processed = set()
