@@ -10,13 +10,18 @@ target_chat = "me"
 
 app = Client("my_account", api_id=api_id, api_hash=api_hash)
 
-# Храним последние обработанные сообщения (чтобы не было дублей)
 processed = set()
 
 
 def match_keywords(text: str) -> bool:
     text = text.lower()
     return any(word in text for word in keywords)
+
+
+def log_error(e: Exception, context: str):
+    print(f"{context} error:", e)
+    with open("errors.log", "a", encoding="utf-8") as f:
+        f.write(f"{context} error: {e}\n")
 
 
 # ================= RAW LISTENER =================
@@ -45,7 +50,7 @@ async def raw_handler(client, update, users, chats):
                 print("RAW → forwarded")
 
             except Exception as e:
-                print("RAW error:", e)
+                log_error(e, "RAW")
 
 
 # ================= POLLING FALLBACK =================
@@ -74,12 +79,12 @@ async def polling_loop():
                             print("POLL → forwarded from", dialog.chat.title)
 
                         except Exception as e:
-                            print("POLL error:", e)
+                            log_error(e, "POLL")
 
-            await asyncio.sleep(15)  # интервал polling
+            await asyncio.sleep(15)
 
         except Exception as e:
-            print("Polling crash:", e)
+            log_error(e, "Polling crash")
             await asyncio.sleep(5)
 
 
@@ -87,8 +92,8 @@ async def polling_loop():
 async def main():
     async with app:
         print("Userbot started (RAW + POLLING)")
-        asyncio.create_task(polling_loop())  # polling работает параллельно
-        await idle()  # держим клиент живым
+        asyncio.create_task(polling_loop())
+        await idle()
 
 
 asyncio.run(main())
