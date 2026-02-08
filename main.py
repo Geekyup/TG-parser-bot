@@ -1,5 +1,5 @@
 import asyncio
-from pyrogram import Client
+from pyrogram import Client, idle
 from pyrogram.raw import types
 
 api_id = 28181900
@@ -24,6 +24,7 @@ def match_keywords(text: str) -> bool:
 async def raw_handler(client, update, users, chats):
     if isinstance(update, types.UpdateNewChannelMessage):
         msg = update.message
+
         if not msg.message:
             return
 
@@ -84,12 +85,10 @@ async def polling_loop():
 
 # ================= START =================
 async def main():
-    # Стартуем клиент один раз через async with
     async with app:
         print("Userbot started (RAW + POLLING)")
-        # Запускаем polling параллельно, не стартуя клиент заново
-        await polling_loop()
+        asyncio.create_task(polling_loop())  # polling работает параллельно
+        await idle()  # держим клиент живым
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
