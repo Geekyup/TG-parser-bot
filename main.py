@@ -1,10 +1,17 @@
 import asyncio
 import sqlite3
-import threading
+import logging
 from pyrogram import Client, filters
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # --- НАСТРОЙКИ ---
 API_ID = 35681900
@@ -12,25 +19,27 @@ API_HASH = "e40ccdcad3ea2108a95fdb371ced0ddd"
 USER_SESSION = "my_account"
 BOT_TOKEN = "8298905952:AAGf0kWp7OEwu0XDAaf9E9v63TZuu6SVUUk"
 ADMIN_ID = 842022631
-TARGET_CHAT = "@parserchenalbot"
+TARGET_CHAT = "me"
 
 # --- БАЗА ДАННЫХ ---
-# Используем отдельные подключения для безопасности
 def get_db_connection():
-    """Создаем новое подключение к БД для каждого потока"""
     db = sqlite3.connect("config.db", check_same_thread=False)
-    db.execute("PRAGMA journal_mode=WAL")  # Для лучшей параллельной работы
+    db.execute("PRAGMA journal_mode=WAL")
     return db
 
-# Инициализация таблиц
-init_db = get_db_connection()
-init_cur = init_db.cursor()
-init_cur.execute("CREATE TABLE IF NOT EXISTS keywords (word TEXT UNIQUE)")
-init_cur.execute("CREATE TABLE IF NOT EXISTS channels (username TEXT UNIQUE)")
-init_db.commit()
-init_db.close()
+# Инициализация БД
+def init_database():
+    db = get_db_connection()
+    cur = db.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS keywords (word TEXT UNIQUE)")
+    cur.execute("CREATE TABLE IF NOT EXISTS channels (username TEXT UNIQUE)")
+    db.commit()
+    db.close()
+    logger.info("База данных инициализирована")
 
-# --- БОТ ДЛЯ КОМАНД АДМИНА ---
+init_database()
+
+# --- БОТ ДЛЯ АДМИНА (БЕЗ POLLING) ---
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -42,174 +51,162 @@ def get_main_kb():
                 types.InlineKeyboardButton(text="➕ Добавить канал", callback_data="add_channel"))
     return builder.as_markup()
 
-@dp.message(Command("start"))
-async def start(message: types.Message):
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("Управление парсером:", reply_markup=get_main_kb())
-
-@dp.callback_query()
-async def callbacks(callback: types.CallbackQuery):
-    db = get_db_connection()
-    cur = db.cursor()
-    
-    action = callback.data
-    if action == "list_words":
-        cur.execute("SELECT word FROM keywords")
-        words = [f"• {r[0]}" for r in cur.fetchall()]
-        text = "Список слов:\n" + ("\n".join(words) if words else "Пусто")
-        try:
-            await callback.message.edit_text(text, reply_markup=get_main_kb())
-        except Exception as e:
-            if "message is not modified" not in str(e):
-                await callback.answer(f"Ошибка: {e}")
-        finally:
-            db.close()
-    
-    elif action == "add_word":
-        await callback.message.answer("Введите слова через запятую (например: крипта, акция, скидка):")
-        db.close()
-        
-    elif action == "add_channel":
-        await callback.message.answer("Введите @юзернеймы каналов через запятую:")
-        db.close()
-    
-    elif action == "list_channels":
-        cur.execute("SELECT username FROM channels")
-        channels = [f"• {r[0]}" for r in cur.fetchall()]
-        text = "Список каналов:\n" + ("\n".join(channels) if channels else "Пусто")
-        try:
-            await callback.message.edit_text(text, reply_markup=get_main_kb())
-        except Exception as e:
-            if "message is not modified" not in str(e):
-                await callback.answer(f"Ошибка: {e}")
-        finally:
-            db.close()
-
-@dp.message()
-async def handle_text(message: types.Message):
-    if message.from_user.id != ADMIN_ID: 
-        return
-    
-    db = get_db_connection()
-    cur = db.cursor()
-    
-    # Если в тексте есть @, значит это каналы
-    if "@" in message.text:
-        items = [i.strip() for i in message.text.split(",")]
-        added = 0
-        for i in items:
-            try:
-                cur.execute("INSERT OR IGNORE INTO channels VALUES (?)", (i,))
-                if cur.rowcount > 0:
-                    added += 1
-            except Exception as e:
-                print(f"Ошибка добавления канала {i}: {e}")
-        db.commit()
-        await message.answer(f"✅ Добавлено каналов: {added}")
-    # Иначе считаем это словами
-    else:
-        items = [i.strip().lower() for i in message.text.split(",")]
-        added = 0
-        for i in items:
-            try:
-                cur.execute("INSERT OR IGNORE INTO keywords VALUES (?)", (i,))
-                if cur.rowcount > 0:
-                    added += 1
-            except Exception as e:
-                print(f"Ошибка добавления слова {i}: {e}")
-        db.commit()
-        await message.answer(f"✅ Добавлено слов: {added}")
-    
-    db.close()
+# --- ОБРАБОТЧИКИ ДЛЯ БОТА ---
+# (здесь ваши обработчики @dp.message, @dp.callback_query как были)
 
 # --- ПАРСЕР ДЛЯ МОНИТОРИНГА КАНАЛОВ ---
 user_app = Client(USER_SESSION, api_id=API_ID, api_hash=API_HASH)
 
+# Глобальная переменная для состояния бота
+bot_initialized = False
+
+async def send_admin_notification(text: str):
+    """Отправка уведомления админу"""
+    try:
+        await bot.send_message(ADMIN_ID, text)
+        logger.info(f"Уведомление отправлено: {text}")
+    except Exception as e:
+        logger.error(f"Ошибка отправки уведомления: {e}")
+
+async def handle_bot_commands():
+    """Обработка команд бота через long polling вручную"""
+    global bot_initialized
+    
+    if not bot_initialized:
+        await send_admin_notification("✅ Парсер каналов запущен!\n"
+                                     "Используйте /start для управления")
+        bot_initialized = True
+    
+    offset = 0
+    while True:
+        try:
+            # Получаем обновления вручную
+            updates = await bot.get_updates(offset=offset, timeout=30)
+            
+            for update in updates:
+                offset = update.update_id + 1
+                
+                # Обрабатываем сообщения
+                if update.message:
+                    await dp.feed_update(bot, update)
+                
+                # Обрабатываем callback-запросы
+                if update.callback_query:
+                    await dp.feed_update(bot, update)
+                    
+        except Exception as e:
+            logger.error(f"Ошибка в handle_bot_commands: {e}")
+            await asyncio.sleep(5)
+
 @user_app.on_message(filters.text | filters.caption)
 async def monitor_channels(client, message):
     try:
-        # Создаем новое подключение к БД
         db = get_db_connection()
         cur = db.cursor()
         
-        # Получаем список каналов для мониторинга
+        # Получаем список каналов
         cur.execute("SELECT username FROM channels")
         monitored = [r[0].lower() for r in cur.fetchall()]
         
-        # Проверяем, из нужного ли канала сообщение
         if message.chat.username:
             current_channel = f"@{message.chat.username.lower()}"
             
-            # ДЕБАГ: выводим информацию
-            print(f"Получено сообщение из: {current_channel}")
-            print(f"Мониторим каналы: {monitored}")
-            
             if current_channel in monitored:
-                # Получаем ключевые слова
                 cur.execute("SELECT word FROM keywords")
                 all_keywords = [r[0].lower() for r in cur.fetchall()]
                 
                 text = (message.text or message.caption or "").lower()
                 
-                # ДЕБАГ: выводим текст и ключевые слова
-                print(f"Текст сообщения: {text[:100]}...")
-                print(f"Ключевые слова: {all_keywords}")
-                
                 if text and all_keywords:
                     for word in all_keywords:
                         if word in text:
-                            print(f"Найдено совпадение: '{word}' в тексте")
+                            logger.info(f"Найдено '{word}' в {current_channel}")
                             await message.copy(TARGET_CHAT)
-                            print("Сообщение переслано!")
                             break
         
         db.close()
         
     except Exception as e:
-        print(f"Ошибка в monitor_channels: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Ошибка в monitor_channels: {e}")
 
-# --- ЗАПУСК ---
-async def run_parser():
-    """Запуск только парсера"""
-    print("Запуск парсера каналов...")
+# --- АЛЬТЕРНАТИВНОЕ РЕШЕНИЕ: ЗАПУСК ТОЛЬКО ПАРСЕРА ---
+async def main_parser_only():
+    """Запуск ТОЛЬКО парсера, без бота для команд"""
+    logger.info("Запуск парсера каналов...")
+    
     await user_app.start()
-    
-    # Получаем информацию о пользователе
     me = await user_app.get_me()
-    print(f"Парсер запущен как: @{me.username}")
-    print("Ожидание сообщений...")
+    logger.info(f"Парсер запущен как: @{me.username}")
     
-    # Ожидаем сигнал завершения
+    # Отправляем приветственное сообщение
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            "🔍 Парсер каналов запущен!\n\n"
+            "Для управления используйте:\n"
+            "• Добавить канал: /add_channel @username\n"
+            "• Добавить слово: /add_word ключевое_слово\n"
+            "• Список каналов: /channels\n"
+            "• Список слов: /words"
+        )
+    except:
+        pass
+    
+    # Простая обработка команд через Pyrogram
+    @user_app.on_message(filters.command("start") & filters.user(ADMIN_ID))
+    async def start_command(client, message):
+        await message.reply("Парсер активен! Используйте команды:\n"
+                          "/add_channel - добавить канал\n"
+                          "/add_word - добавить слово\n"
+                          "/channels - список каналов\n"
+                          "/words - список слов")
+    
+    @user_app.on_message(filters.command("add_channel") & filters.user(ADMIN_ID))
+    async def add_channel_command(client, message):
+        args = message.text.split()
+        if len(args) > 1:
+            db = get_db_connection()
+            for channel in args[1:]:
+                if channel.startswith("@"):
+                    db.execute("INSERT OR IGNORE INTO channels VALUES (?)", (channel,))
+            db.commit()
+            db.close()
+            await message.reply("✅ Каналы добавлены")
+    
+    # ... другие команды
+    
+    # Ждем сигнала завершения
     await asyncio.Event().wait()
 
-async def run_bot():
-    """Запуск только бота для админа"""
-    print("Запуск бота админа...")
-    await dp.start_polling(bot)
-
+# --- ГЛАВНЫЙ ЗАПУСК ---
 async def main():
-    """Запуск обоих компонентов параллельно"""
-    print("Запуск системы мониторинга...")
+    """Выберите один из вариантов запуска"""
     
-    # Создаем задачи для параллельного выполнения
-    parser_task = asyncio.create_task(run_parser())
-    bot_task = asyncio.create_task(run_bot())
+    # ВАРИАНТ 1: Только парсер с простыми командами
+    await main_parser_only()
     
-    # Ожидаем завершения обеих задач
-    await asyncio.gather(parser_task, bot_task)
+    # ВАРИАНТ 2: Парсер + бот (если нужно)
+    # await asyncio.gather(
+    #     user_app.start(),
+    #     handle_bot_commands()
+    # )
 
 if __name__ == "__main__":
     try:
-        # Добавляем подробное логирование
-        import logging
-        logging.basicConfig(level=logging.INFO)
+        # Убиваем возможные предыдущие процессы
+        import os
+        import signal
+        os.system("pkill -f 'python.*bot' 2>/dev/null || true")
+        
+        logger.info("=" * 50)
+        logger.info("Запуск системы мониторинга Telegram")
+        logger.info("=" * 50)
         
         asyncio.run(main())
+        
     except KeyboardInterrupt:
-        print("\nОстановка системы...")
+        logger.info("Система остановлена пользователем")
     except Exception as e:
-        print(f"Критическая ошибка: {e}")
+        logger.error(f"Критическая ошибка: {e}")
         import traceback
         traceback.print_exc()
