@@ -3,7 +3,7 @@ from pyrogram import Client, filters
 # --- НАСТРОЙКИ ---
 api_id = 28181900          # Твой API_ID
 api_hash = "e40ccdcad3ea2108a95fdb371ced0ddd"      # Твой API_HASH
-keywords = ["акция", "крипта", "вакансия", "путин", 'Россия', "зумеры"] 
+keywords = ["акция", "крипта", "вакансия", "путин", 'Россия', "РФ", "зумеры"] 
 target_chat = "me"        
 
 app = Client("my_account", api_id=api_id, api_hash=api_hash)
