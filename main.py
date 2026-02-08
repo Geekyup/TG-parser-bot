@@ -6,12 +6,12 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # --- НАСТРОЙКИ ---
-API_ID = 35681900                # Твой API_ID с my.telegram.org
-API_HASH = "e40ccdcad3ea2108a95fdb371ced0ddd"         # Твой API_HASH
-USER_SESSION = "my_account"    # Название файла сессии
-BOT_TOKEN = "8298905952:AAGf0kWp7OEwu0XDAaf9E9v63TZuu6SVUUk"       # Токен от BotFather
-ADMIN_ID = 842022631        # Твой ID (чтобы чужие не рулили ботом)
-TARGET_CHAT = "me"             # Куда слать находки
+API_ID = 35681900
+API_HASH = "e40ccdcad3ea2108a95fdb371ced0ddd"
+USER_SESSION = "my_account"
+BOT_TOKEN = "8298905952:AAGf0kWp7OEwu0XDAaf9E9v63TZuu6SVUUk"
+ADMIN_ID = 842022631
+TARGET_CHAT = "me"
 
 # --- БАЗА ДАННЫХ ---
 db = sqlite3.connect("config.db")
@@ -20,7 +20,7 @@ cur.execute("CREATE TABLE IF NOT EXISTS keywords (word TEXT UNIQUE)")
 cur.execute("CREATE TABLE IF NOT EXISTS channels (username TEXT UNIQUE)")
 db.commit()
 
-# --- ЛОГИКА БОТА-АДМИНКИ (AIOGRAM) ---
+# --- БОТ ДЛЯ КОМАНД АДМИНА ---
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -44,38 +44,62 @@ async def callbacks(callback: types.CallbackQuery):
         cur.execute("SELECT word FROM keywords")
         words = [f"• {r[0]}" for r in cur.fetchall()]
         text = "Список слов:\n" + ("\n".join(words) if words else "Пусто")
-        await callback.message.edit_text(text, reply_markup=get_main_kb())
+        # ОБНОВЛЕНИЕ: Проверяем, изменилось ли что-то
+        try:
+            await callback.message.edit_text(text, reply_markup=get_main_kb())
+        except Exception as e:
+            if "message is not modified" not in str(e):
+                await callback.answer(f"Ошибка: {e}")
     
     elif action == "add_word":
         await callback.message.answer("Введите слова через запятую (например: крипта, акция, скидка):")
         
     elif action == "add_channel":
         await callback.message.answer("Введите @юзернеймы каналов через запятую:")
+    
+    elif action == "list_channels":
+        cur.execute("SELECT username FROM channels")
+        channels = [f"• {r[0]}" for r in cur.fetchall()]
+        text = "Список каналов:\n" + ("\n".join(channels) if channels else "Пусто")
+        try:
+            await callback.message.edit_text(text, reply_markup=get_main_kb())
+        except Exception as e:
+            if "message is not modified" not in str(e):
+                await callback.answer(f"Ошибка: {e}")
 
 @dp.message()
 async def handle_text(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
+    if message.from_user.id != ADMIN_ID: 
+        return
     
     # Если в тексте есть @, значит это каналы
     if "@" in message.text:
         items = [i.strip() for i in message.text.split(",")]
+        added = 0
         for i in items:
             try:
                 cur.execute("INSERT OR IGNORE INTO channels VALUES (?)", (i,))
-            except: pass
+                if cur.rowcount > 0:
+                    added += 1
+            except Exception as e:
+                print(f"Ошибка добавления канала {i}: {e}")
         db.commit()
-        await message.answer(f"✅ Добавлено каналов: {len(items)}")
+        await message.answer(f"✅ Добавлено каналов: {added}")
     # Иначе считаем это словами
     else:
         items = [i.strip().lower() for i in message.text.split(",")]
+        added = 0
         for i in items:
             try:
                 cur.execute("INSERT OR IGNORE INTO keywords VALUES (?)", (i,))
-            except: pass
+                if cur.rowcount > 0:
+                    added += 1
+            except Exception as e:
+                print(f"Ошибка добавления слова {i}: {e}")
         db.commit()
-        await message.answer(f"✅ Добавлено слов: {len(items)}")
+        await message.answer(f"✅ Добавлено слов: {added}")
 
-# --- ЛОГИКА ПАРСЕРА (PYROGRAM) ---
+# --- ПАРСЕР ДЛЯ МОНИТОРИНГА КАНАЛОВ ---
 user_app = Client(USER_SESSION, api_id=API_ID, api_hash=API_HASH)
 
 @user_app.on_message(filters.text | filters.caption)
@@ -95,10 +119,19 @@ async def monitor_channels(client, message):
 # --- ЗАПУСК ---
 async def main():
     print("Запуск системы...")
-    await asyncio.gather(
-        dp.start_polling(bot),
-        user_app.start()
-    )
+    
+    # Запускаем парсер каналов
+    await user_app.start()
+    print("Парсер запущен")
+    
+    # Запускаем бота отдельно, если нужны команды
+    # ИЛИ убираем polling полностью и используем вебхуки
+    
+    # Вместо polling просто держим приложение запущенным
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nОстановка...")
