@@ -1,5 +1,5 @@
 import asyncio
-from pyrogram import Client, idle
+from pyrogram import Client
 from pyrogram.raw import types
 
 api_id = 28181900
@@ -7,10 +7,9 @@ api_hash = "e40ccdcad3ea2108a95fdb371ced0ddd"
 
 keywords = ["акция", "крипта", "вакансия", "путин", "россия", "рф", "зумеры"]
 target_chat = "me"
+processed = set()
 
 app = Client("my_account", api_id=api_id, api_hash=api_hash)
-
-processed = set()
 
 
 def match_keywords(text: str) -> bool:
@@ -18,18 +17,10 @@ def match_keywords(text: str) -> bool:
     return any(word in text for word in keywords)
 
 
-def log_error(e: Exception, context: str):
-    print(f"{context} error:", e)
-    with open("errors.log", "a", encoding="utf-8") as f:
-        f.write(f"{context} error: {e}\n")
-
-
-# ================= RAW LISTENER =================
 @app.on_raw_update()
 async def raw_handler(client, update, users, chats):
     if isinstance(update, types.UpdateNewChannelMessage):
         msg = update.message
-
         if not msg.message:
             return
 
@@ -41,19 +32,13 @@ async def raw_handler(client, update, users, chats):
 
         if match_keywords(text):
             try:
-                await client.forward_messages(
-                    target_chat,
-                    msg.peer_id.channel_id,
-                    msg.id
-                )
+                await client.forward_messages(target_chat, msg.peer_id.channel_id, msg.id)
                 processed.add(msg_id)
                 print("RAW → forwarded")
-
             except Exception as e:
-                log_error(e, "RAW")
+                print("RAW error:", e)
 
 
-# ================= POLLING FALLBACK =================
 async def polling_loop():
     while True:
         try:
@@ -77,23 +62,21 @@ async def polling_loop():
                             await msg.forward(target_chat)
                             processed.add(msg_id)
                             print("POLL → forwarded from", dialog.chat.title)
-
                         except Exception as e:
-                            log_error(e, "POLL")
+                            print("POLL error:", e)
 
             await asyncio.sleep(15)
 
         except Exception as e:
-            log_error(e, "Polling crash")
+            print("Polling crash:", e)
             await asyncio.sleep(5)
 
 
-# ================= START =================
-async def main():
-    async with app:
-        print("Userbot started (RAW + POLLING)")
+def main():
+    async def runner():
+        # Запускаем polling в фоне
         asyncio.create_task(polling_loop())
-        await idle()
+        print("Userbot started (RAW + POLLING)")
+        await app.idle()  # ждем Ctrl+C или сигнал завершения
 
-
-asyncio.run(main())
+    app.run(runner())
